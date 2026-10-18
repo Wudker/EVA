@@ -1,1 +1,21 @@
-/Priv
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Lokalna pamięć E.W.A.
+**/memory/projects.json
+**/memory/projects.json.bak
+**/memory/*.db
+**/memory/*.db-*
+**/memory/.projects-*.tmp
+
+# Prywatne dane
+.env
+.env.*
+*.key
+credentials.json
+token.json
+
+# Dotychczasowy katalog prywatny
+/Priv/
