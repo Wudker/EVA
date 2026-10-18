@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "projects": [
+    {
+      "id": "smartroom",
+      "name": "SmartRoom",
+      "aliases": [],
+      "facts": [
+        "System inteligentnego pokoju ze sterowaniem przez MQTT.",
+        "Sterowanie oświetleniem LED przy łóżku i na półce przez ESP32.",
+        "Stan urządzeń musi pochodzić z MQTT, nie z pamięci językowej."
+      ]
+    },
+    {
+      "id": "ewa",
+      "name": "E.W.A. 2.0",
+      "aliases": ["EWA", "Ewa"],
+      "facts": [
+        "Raspberry Pi 5 uruchamia lokalnie Ollamę i model ewa (Qwen2.5 3B).",
+        "Raspberry Pi 3 A+ jest planowany do STT, TTS, MQTT i integracji API.",
+        "Komunikacja Pi 3 i Pi 5 działa przez sieć USB 10.77.77.x."
+      ]
+    }
+  ]
+}

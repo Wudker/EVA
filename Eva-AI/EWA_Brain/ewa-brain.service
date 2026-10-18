@@ -1,0 +1,19 @@
+[Unit]
+Description=E.W.A. Brain — Qwen, JSON projects, SQLite (USB-only)
+After=network-online.target ollama.service
+Wants=network-online.target
+Requires=ollama.service
+
+[Service]
+Type=simple
+User=soul
+WorkingDirectory=/home/soul/EWA_Brain
+Environment=EVA_MODEL=ewa
+Environment=EVA_USB_IP=10.77.77.1
+ExecStart=/usr/bin/python3 /home/soul/EWA_Brain/server.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
