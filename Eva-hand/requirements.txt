@@ -1,0 +1,2 @@
+# Model językowy pobiera osobno setup_pi3.sh (lub użyj istniejącego przez --model).
+vosk==0.3.45

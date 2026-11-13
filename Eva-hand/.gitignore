@@ -1,0 +1,6 @@
+.venv/
+models/
+__pycache__/
+*.py[cod]
+*.wav
+.pytest_cache/
