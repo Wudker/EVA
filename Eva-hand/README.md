@@ -1,6 +1,14 @@
-# Eva-hand — mikrofon na Pi 3, odpowiedź tekstowa z Pi 5
+# Eva-hand — mikrofon i głośnik na Pi 3, AI na Pi 5
 
-Zacznij od [instrukcji instalacji i SSH](../START_GLOS_TEKST.md).
+Zacznij od [instrukcji etapu 2](../START_ETAP2_GLOS_GLOSNIK.md).
+
+Nowe: `--speak` odczytuje pole `text` odpowiedzi przez eSpeak NG i ALSA.
+`--tts-test` sprawdza sam głośnik, a `--list-outputs` pokazuje wyjścia audio.
+Nagranie, rozpoznawanie, zapytanie AI i odtwarzanie są wykonywane kolejno.
+Bez `--speak` lub konfiguracji `speak: true` pozostaje dotychczasowy tryb tekstowy.
+Ustawienia można zapisać w ignorowanym przez Git pliku `audio.local.json`,
+utworzonym na podstawie `audio.example.json`. Parametry CLI mają pierwszeństwo.
+`--no-speak` wyłącza głośnik także przy włączonym odczycie w konfiguracji.
 
 Domyślnie Enter rozpoczyna 8 sekund nagrania mono PCM 16 bit / 16 kHz.
 Vosk rozpoznaje tekst, a program wysyła go do `/chat` istniejącego
@@ -86,3 +94,4 @@ dla używanego 32-bitowego systemu) i zgłosi brak kompilatora, `ffi.h` lub
 sudo apt install -y build-essential python3-dev libffi-dev pkg-config
 bash setup_pi3.sh
 ```
+

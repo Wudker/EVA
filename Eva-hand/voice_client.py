@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pi 3: Enter -> mikrofon/Vosk -> API Pi 5 -> odpowiedź w terminalu."""
+"""Pi 3: Enter -> mikrofon/Vosk -> API Pi 5 -> tekst i opcjonalnie głośnik."""
 from __future__ import annotations
 
 import argparse
@@ -15,6 +15,8 @@ import urllib.parse
 import urllib.request
 import wave
 from pathlib import Path
+
+from speech_output import SpeechError, check_dependencies, speak
 
 ROOT = Path(__file__).resolve().parent
 RATE = 16000
@@ -153,11 +155,24 @@ def handle_text(text: str, args) -> bool:
     if result.get("memory") not in (None, "none"):
         print("[pamięć:", str(result["memory"]) + "]", flush=True)
     print(f"[czas oczekiwania na API: {time.monotonic() - start:.1f} s]", flush=True)
+    if args.speak:
+        try:
+            synthesis, playback = speak(result["text"], args.output_device, args.voice, args.speech_rate)
+            print(f"[synteza: {synthesis:.1f} s; odtwarzanie: {playback:.1f} s]", flush=True)
+        except SpeechError as exc:
+            print(f"Błąd głośnika: {exc}. Odpowiedź tekstowa jest powyżej; pytania nie wysyłam ponownie.",
+                  file=sys.stderr, flush=True)
+            return False
     return True
 
 
 def parse_args(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("--config", type=Path)
+    known, _ = config_parser.parse_known_args(argv)
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, help="lokalny JSON z ustawieniami audio")
     parser.add_argument("--server", default="http://10.77.77.1:8000",
                         help="adres API Pi 5 bez /chat")
     parser.add_argument("--model", type=Path, default=DEFAULT_MODEL,
@@ -166,13 +181,36 @@ def parse_args(argv=None):
     parser.add_argument("--seconds", type=int, default=8, help="czas nagrania: 1–30 s (domyślnie 8)")
     parser.add_argument("--session", default="ewa-voice", help="stały identyfikator rozmowy")
     parser.add_argument("--timeout", type=float, default=390, help="limit oczekiwania na API w sekundach")
+    parser.add_argument("--output-device", default="default", help="wyjście ALSA dla głośnika")
+    parser.add_argument("--voice", default="pl", help="głos eSpeak NG, domyślnie pl")
+    parser.add_argument("--speech-rate", type=int, default=160, help="tempo mowy: 80–300")
+    speech_mode = parser.add_mutually_exclusive_group()
+    speech_mode.add_argument("--speak", dest="speak", action="store_true", help="odczytuj odpowiedzi przez głośnik")
+    speech_mode.add_argument("--no-speak", dest="speak", action="store_false", help="tylko odpowiedzi tekstowe")
+    parser.set_defaults(speak=False)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--check", action="store_true", help="sprawdź API bez Vosk i mikrofonu")
     modes.add_argument("--list-devices", action="store_true", help="pokaż urządzenia ALSA")
+    modes.add_argument("--list-outputs", action="store_true", help="pokaż wyjścia ALSA dla głośnika")
+    modes.add_argument("--tts-test", action="store_true", help="test głośnika bez AI i mikrofonu")
     modes.add_argument("--text", help="jedno pytanie tekstowe bez Vosk i mikrofonu")
     modes.add_argument("--wav", type=Path, help="rozpoznaj jeden istniejący plik WAV zamiast nagrywać")
     parser.add_argument("--stt-only", action="store_true", help="tylko rozpoznawanie mowy; bez API")
     parser.add_argument("--once", action="store_true", help="zakończ po jednej próbie nagrania")
+    config_path = known.config.expanduser() if known.config else ROOT / "audio.local.json"
+    if known.config or config_path.exists():
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            allowed = {"device": str, "output_device": str, "voice": str,
+                       "seconds": int, "speech_rate": int, "speak": bool}
+            if not isinstance(config, dict) or set(config) - set(allowed):
+                raise ValueError("dozwolone klucze: " + ", ".join(allowed))
+            for key, value in config.items():
+                if type(value) is not allowed[key]:
+                    raise ValueError(f"niepoprawny typ pola {key}")
+            parser.set_defaults(**config)
+        except (OSError, ValueError, UnicodeError) as exc:
+            parser.error(f"Nie można wczytać {config_path}: {exc}")
     args = parser.parse_args(argv)
     args.server = args.server.rstrip("/")
     parsed = urllib.parse.urlsplit(args.server)
@@ -184,6 +222,12 @@ def parse_args(argv=None):
         parser.error("--session: 1–32 znaki, litery ASCII, cyfry, _ lub -")
     if not 1 <= args.timeout <= 3600:
         parser.error("--timeout musi być w zakresie 1–3600 s")
+    if not 80 <= args.speech_rate <= 300:
+        parser.error("--speech-rate musi być w zakresie 80–300")
+    for name in ("device", "output_device", "voice"):
+        value = getattr(args, name)
+        if not value.strip() or len(value) > 200 or any(ord(c) < 32 for c in value):
+            parser.error(f"Niepoprawna wartość {name}")
     args.model = args.model.expanduser()
     return args
 
@@ -191,6 +235,16 @@ def parse_args(argv=None):
 def main(argv=None) -> int:
     args = parse_args(argv)
     try:
+        if args.list_outputs:
+            if not shutil.which("aplay"):
+                raise ClientError("Brakuje aplay. Zainstaluj pakiet alsa-utils.")
+            first = subprocess.run(["aplay", "-l"], check=False).returncode
+            second = subprocess.run(["aplay", "-L"], check=False).returncode
+            return int(first != 0 or second != 0)
+        if args.tts_test:
+            speak("Cześć Bartłomieju. Tu Ewa. Test głośnika działa.",
+                  args.output_device, args.voice, args.speech_rate)
+            return 0
         if args.list_devices:
             if not shutil.which("arecord"):
                 raise ClientError("Brakuje arecord. Zainstaluj pakiet alsa-utils.")
@@ -200,6 +254,8 @@ def main(argv=None) -> int:
         if args.check:
             print(json.dumps(check_server(args.server), ensure_ascii=False, indent=2))
             return 0
+        if args.speak and not args.stt_only:
+            check_dependencies()
         if args.text is not None:
             if not args.text.strip():
                 raise ClientError("Pytanie --text nie może być puste.")
@@ -212,7 +268,8 @@ def main(argv=None) -> int:
         model, recognizer_factory = load_vosk(args.model)
         if args.wav is not None:
             return 0 if handle_text(transcribe_wav(args.wav.expanduser(), model, recognizer_factory), args) else 1
-        print(f"Nagrywanie: {args.seconds} s, urządzenie: {args.device}. Odpowiedzi tekstowe.")
+        print(f"Nagrywanie: {args.seconds} s, urządzenie: {args.device}. "
+              f"Głośnik: {'włączony' if args.speak and not args.stt_only else 'wyłączony'}.")
         while True:
             try:
                 command = input("Enter = nagranie; q + Enter = koniec: ").strip().lower()
@@ -230,7 +287,9 @@ def main(argv=None) -> int:
                     print(f"Mów teraz — nagrywam przez {args.seconds} s...", flush=True)
                     record_wav(wav_path, args.device, args.seconds)
                     print("Rozpoznaję mowę...", flush=True)
+                    recognition_started = time.monotonic()
                     text = transcribe_wav(wav_path, model, recognizer_factory)
+                    print(f"[rozpoznawanie: {time.monotonic() - recognition_started:.1f} s]", flush=True)
                 ok = handle_text(text, args)
                 if args.once:
                     return 0 if ok else 1
@@ -241,10 +300,11 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         print("\nZakończono.", flush=True)
         return 130
-    except ClientError as exc:
+    except (ClientError, SpeechError) as exc:
         print("Błąd:", exc, file=sys.stderr, flush=True)
         return 1
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

@@ -1,0 +1,114 @@
+{
+  "repository": "Wudker/EVA",
+  "base_commit": "f0b66a260b714856c287092064ccc2fd54761416",
+  "date": "2026-11-14",
+  "kind": "overlay",
+  "tests_passed": 44,
+  "files": [
+    {
+      "path": ".gitattributes",
+      "sha256": "be8e41dee5bceddd2fb91706584362e043ca3ceeaca63fc564344e0b9bc872a5",
+      "previous_sha256": "97f84c8d5bdae067d7c95b89a8bec8f5af5b576ad043affb4e54212f61bed8cc"
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "05793782afd9bff96221aaa469f93f5bb259800cccf678c4e33b2464e9ef2d5b",
+      "previous_sha256": "26cd99587387727ff28d9ec039ae5b6cadd199bc72bfd3fca6b2bc859046291e"
+    },
+    {
+      "path": "Eva-hand/README.md",
+      "sha256": "5f23394b30b81d1063720dcb48dd807d3630fad53b80ebf598d6246d822f287e",
+      "previous_sha256": "52c3920e71d3b93884394c9c45aab432915764b90ae5e8c079a13235129ed403"
+    },
+    {
+      "path": "Eva-hand/audio.example.json",
+      "sha256": "4f92fe112eed31b0fbae158e3c9159616df2a4297e67ac0dfbae3bac63f4ddf0",
+      "previous_sha256": null
+    },
+    {
+      "path": "Eva-hand/speech_output.py",
+      "sha256": "19f4c102ba8d3c20b27960430622f8fb2eb7149de08f32b327e9d0400bdece79",
+      "previous_sha256": null
+    },
+    {
+      "path": "Eva-hand/tests/test_speech_output.py",
+      "sha256": "5279e666f34cc9e930c595d657640d6d47ed96f61f3fbcaced3ea2d35a94158d",
+      "previous_sha256": null
+    },
+    {
+      "path": "Eva-hand/voice_client.py",
+      "sha256": "49be355a1d4fb099f16efa03d757552c9655ba902bb5e21b00c439b712e74fb1",
+      "previous_sha256": "eaca8fb99c27bf795cf5a0a3124ab3eea5902e589ec8fd1ac25faa2997af2aa5"
+    },
+    {
+      "path": "START_ETAP2_GLOS_GLOSNIK.md",
+      "sha256": "a82f5de75b58381809ea396d1db75393a8ac1b2147235d02989015424da8aa2c",
+      "previous_sha256": null
+    },
+    {
+      "path": "instalation/Modelfile.example",
+      "sha256": "d69a207b2602a345fb47b175b6b80cbe43ccafa0cad180104bf86fbe1c89bd4d",
+      "previous_sha256": null
+    },
+    {
+      "path": "instalation/README.md",
+      "sha256": "9894ab459d92dd43c39645a159eda77a25a6e3e03cb292bbffc69f653c85e693",
+      "previous_sha256": null
+    },
+    {
+      "path": "instalation/backup_pi5.sh",
+      "sha256": "81680214aaad1e464e5c8f7fc674fe8691e12cea898c165c2831b18d887c07a7",
+      "previous_sha256": null
+    },
+    {
+      "path": "instalation/common.sh",
+      "sha256": "051452a35b986c80feb2e1997e80b365cc4f6686be830da25ddacb8393054fdc",
+      "previous_sha256": null
+    },
+    {
+      "path": "instalation/configure_usb.sh",
+      "sha256": "594741373cf3b584a99afe7aeb9ff807f0008b9000edd08643f114861a2d963a",
+      "previous_sha256": null
+    },
+    {
+      "path": "instalation/doctor.py",
+      "sha256": "15d135a6c6fe6afcfbbd89867124f8e075dd423a23113e7a1ca36ee35e065d96",
+      "previous_sha256": null
+    },
+    {
+      "path": "instalation/install_pi3.sh",
+      "sha256": "df82858c1ff5691bb506d60038aed58eaca9d6d9f3bca4265c6e1be89373f04e",
+      "previous_sha256": null
+    },
+    {
+      "path": "instalation/install_pi5.sh",
+      "sha256": "13f16f56014b6c1fd0daeafcd18bb53828743332082dc4969d16736552c83332",
+      "previous_sha256": null
+    },
+    {
+      "path": "instalation/restore_pi5.sh",
+      "sha256": "f22e4d8e5b22bd1e80c509cbddf6098f06bf06ede2caf3b392c7ce6d38f2805b",
+      "previous_sha256": null
+    },
+    {
+      "path": "instalation/state.py",
+      "sha256": "6f4820602d145b8f65a862460c636426886c0719c71d6c409abda6468540e70c",
+      "previous_sha256": null
+    },
+    {
+      "path": "instalation/state_service.sh",
+      "sha256": "1a8cb9937b6dc2eac84c0bab731ea40bba410a71fd3b7d95932254efc74b7977",
+      "previous_sha256": null
+    },
+    {
+      "path": "instalation/tests/test_installers.py",
+      "sha256": "96b429552b21bec074320da1678d887efab2f660794731596956ab5331a2d77b",
+      "previous_sha256": null
+    },
+    {
+      "path": "instalation/tests/test_state.py",
+      "sha256": "645214a0060cd21e4a13232bca23cbca3da5f366449e7896641c9ab0d53e4850",
+      "previous_sha256": null
+    }
+  ]
+}

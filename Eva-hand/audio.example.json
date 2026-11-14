@@ -1,0 +1,8 @@
+{
+  "device": "default",
+  "output_device": "default",
+  "seconds": 8,
+  "speak": true,
+  "voice": "pl",
+  "speech_rate": 160
+}

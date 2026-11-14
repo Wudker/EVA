@@ -19,3 +19,10 @@ token.json
 
 # Dotychczasowy katalog prywatny
 /Priv/
+
+# Lokalna konfiguracja audio i prywatne kopie E.W.A.
+**/audio.local.json
+**/*.local.env
+**/ewa-backups/
+ewa-state-*.tar.gz
+
