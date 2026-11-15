@@ -90,7 +90,7 @@ def call_ollama(history: list[dict], text: str, context: str, note: str = "") ->
         "messages": [{"role": "system", "content": system}, *history,
                      {"role": "user", "content": text}],
         "options": {"temperature": 0.2, "num_ctx": 3072, "num_predict": 280},
-        "keep_alive": "5m",
+        "keep_alive": "30m",
     }
     raw = make_request_json(OLLAMA_URL + "/api/chat", payload, 360)
     try:
