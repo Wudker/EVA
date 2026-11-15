@@ -1,0 +1,22 @@
+{
+  "package": "EVA_etap4_AI_pomiary_i_JSON",
+  "base_repository": "Wudker/EVA",
+  "base_verified_github_blobs": {
+    "Eva-AI/EWA_Brain/modules/brain.py": "4806c7540b06100625293eb74785f1b52a241646",
+    "Eva-hand/voice_client.py": "c4fd720e7d3e02e2264fa13c2f4caa3e84e99069"
+  },
+  "software_tests_passed": {
+    "brain": 24,
+    "client_audio": 38,
+    "total": 62
+  },
+  "hardware_validation": "Not performed. AI correctness and performance must be measured on Pi5.",
+  "files": {
+    "Eva-AI/EWA_Brain/modules/brain.py": "956eb81984e68a0b7094daf31230d570809324fbcf5b3f26b1d0ebd245ce3015",
+    "Eva-AI/EWA_Brain/tests/test_ollama_format.py": "6c3ef59ecc7c1ffe0292a023eff3c62b0077bddfdcb1efe8cab43a116f79c46c",
+    "Eva-hand/voice_client.py": "4111b65e2dcdd56a7faebfcdd8973008693d49dbb879c2149abef2cd9f79ee8f",
+    "Eva-hand/tests/test_ai_timings.py": "7d66fbd6b5b9a68134fa10e01a69bd56cc2e8438be0171b3e508d8ce5341ba41",
+    "instalation/benchmark_ai.py": "775c3793a4268765f3a22920a2fdc808e0a5123e8ff3cd14df7d6e5dafbd6deb",
+    "START_ETAP4_AI.md": "06e14c6499f9210fc7a8fa6e8ac63b686d22d32c0e7fda8357901292f4f23ef6"
+  }
+}
