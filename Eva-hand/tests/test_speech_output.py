@@ -112,7 +112,7 @@ class SpeechFailureTests(unittest.TestCase):
     def test_microphone_is_closed_before_speech_and_next_prompt(self):
         events = []
         def record(*args): events.append("record-closed")
-        def play(*args): events.append("speech-finished"); return 0.1, 0.2
+        def play(*args, **kwargs): events.append("speech-finished"); return 0.1, 0.2
         with patch.object(client, "check_dependencies"), \
              patch.object(client, "check_server", return_value={"model": "ewa"}), \
              patch.object(client.shutil, "which", return_value="/usr/bin/arecord"), \

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -16,7 +17,8 @@ import urllib.request
 import wave
 from pathlib import Path
 
-from speech_output import SpeechError, check_dependencies, speak
+from speech_output import (SpeechError, check_dependencies, speak, run_audio,
+                           DEFAULT_PIPER_PYTHON, DEFAULT_PIPER_MODEL)
 
 ROOT = Path(__file__).resolve().parent
 RATE = 16000
@@ -140,6 +142,32 @@ def load_vosk(path: Path):
     return model, KaldiRecognizer
 
 
+def transcribe_isolated(path: Path, model_path: Path, diagnostics=False) -> str:
+    """Proces Vosk kończy się i oddaje RAM przed zapytaniem HTTP i TTS."""
+    try:
+        raw = run_audio([sys.executable, str(ROOT / "stt_worker.py"),
+                         "--model", str(model_path), "--wav", str(path)],
+                        180, capture=True, diagnostics=diagnostics, label="Vosk")
+        result = json.loads(raw.decode("utf-8"))
+        if not isinstance(result, dict) or not isinstance(result.get("text"), str):
+            raise ValueError("brak pola text")
+        return result["text"]
+    except (SpeechError, ValueError, UnicodeError) as exc:
+        raise ClientError(f"Nie udało się rozpoznać mowy: {exc}") from exc
+
+
+def speech_options(args):
+    return dict(engine=args.tts_engine, piper_python=args.piper_python,
+                piper_model=args.piper_model, length_scale=args.piper_length_scale,
+                fallback=args.tts_fallback, diagnostics=args.audio_diagnostics)
+
+
+def say(text, args):
+    synthesis, playback = speak(text, args.output_device, args.voice, args.speech_rate,
+                               **speech_options(args))
+    print(f"[synteza: {synthesis:.1f} s; odtwarzanie: {playback:.1f} s]", flush=True)
+
+
 def handle_text(text: str, args) -> bool:
     text = text.strip()
     if not text:
@@ -157,8 +185,7 @@ def handle_text(text: str, args) -> bool:
     print(f"[czas oczekiwania na API: {time.monotonic() - start:.1f} s]", flush=True)
     if args.speak:
         try:
-            synthesis, playback = speak(result["text"], args.output_device, args.voice, args.speech_rate)
-            print(f"[synteza: {synthesis:.1f} s; odtwarzanie: {playback:.1f} s]", flush=True)
+            say(result["text"], args)
         except SpeechError as exc:
             print(f"Błąd głośnika: {exc}. Odpowiedź tekstowa jest powyżej; pytania nie wysyłam ponownie.",
                   file=sys.stderr, flush=True)
@@ -184,6 +211,17 @@ def parse_args(argv=None):
     parser.add_argument("--output-device", default="default", help="wyjście ALSA dla głośnika")
     parser.add_argument("--voice", default="pl", help="głos eSpeak NG, domyślnie pl")
     parser.add_argument("--speech-rate", type=int, default=160, help="tempo mowy: 80–300")
+    parser.add_argument("--tts-engine", choices=("espeak", "piper"), default="espeak")
+    parser.add_argument("--piper-python", default=DEFAULT_PIPER_PYTHON)
+    parser.add_argument("--piper-model", default=DEFAULT_PIPER_MODEL)
+    parser.add_argument("--piper-length-scale", type=float, default=1.0,
+                        help="tempo Pipera: 0.5–2; większa wartość = wolniej")
+    parser.add_argument("--tts-fallback", action=argparse.BooleanOptionalAction, default=True,
+                        help="po błędzie syntezy Piper użyj eSpeak NG")
+    parser.add_argument("--stt-mode", choices=("auto", "isolated", "persistent"), default="auto",
+                        help="auto: oddzielny proces Vosk dla mowy Piper; oszczędza RAM")
+    parser.add_argument("--audio-diagnostics", action=argparse.BooleanOptionalAction, default=False,
+                        help="próbkuj RSS procesów audio oraz dostępny RAM i wolny swap")
     speech_mode = parser.add_mutually_exclusive_group()
     speech_mode.add_argument("--speak", dest="speak", action="store_true", help="odczytuj odpowiedzi przez głośnik")
     speech_mode.add_argument("--no-speak", dest="speak", action="store_false", help="tylko odpowiedzi tekstowe")
@@ -202,11 +240,15 @@ def parse_args(argv=None):
         try:
             config = json.loads(config_path.read_text(encoding="utf-8"))
             allowed = {"device": str, "output_device": str, "voice": str,
-                       "seconds": int, "speech_rate": int, "speak": bool}
+                       "seconds": int, "speech_rate": int, "speak": bool,
+                       "tts_engine": str, "piper_python": str, "piper_model": str,
+                       "piper_length_scale": (int, float), "tts_fallback": bool,
+                       "stt_mode": str, "audio_diagnostics": bool}
             if not isinstance(config, dict) or set(config) - set(allowed):
                 raise ValueError("dozwolone klucze: " + ", ".join(allowed))
             for key, value in config.items():
-                if type(value) is not allowed[key]:
+                types = allowed[key] if isinstance(allowed[key], tuple) else (allowed[key],)
+                if type(value) not in types:
                     raise ValueError(f"niepoprawny typ pola {key}")
             parser.set_defaults(**config)
         except (OSError, ValueError, UnicodeError) as exc:
@@ -224,6 +266,13 @@ def parse_args(argv=None):
         parser.error("--timeout musi być w zakresie 1–3600 s")
     if not 80 <= args.speech_rate <= 300:
         parser.error("--speech-rate musi być w zakresie 80–300")
+    if args.tts_engine not in ("espeak", "piper") or args.stt_mode not in ("auto", "isolated", "persistent"):
+        parser.error("Niepoprawny tts_engine lub stt_mode w konfiguracji")
+    if not math.isfinite(args.piper_length_scale) or not 0.5 <= args.piper_length_scale <= 2:
+        parser.error("--piper-length-scale musi być w zakresie 0.5–2")
+    for value in (args.piper_python, args.piper_model):
+        if not value.strip() or len(value) > 4096 or any(ord(c) < 32 for c in value):
+            parser.error("Niepoprawna ścieżka Pipera")
     for name in ("device", "output_device", "voice"):
         value = getattr(args, name)
         if not value.strip() or len(value) > 200 or any(ord(c) < 32 for c in value):
@@ -242,8 +291,7 @@ def main(argv=None) -> int:
             second = subprocess.run(["aplay", "-L"], check=False).returncode
             return int(first != 0 or second != 0)
         if args.tts_test:
-            speak("Cześć Bartłomieju. Tu Ewa. Test głośnika działa.",
-                  args.output_device, args.voice, args.speech_rate)
+            say("Cześć Bartłomieju. Tu Ewa. Test głośnika działa.", args)
             return 0
         if args.list_devices:
             if not shutil.which("arecord"):
@@ -255,7 +303,7 @@ def main(argv=None) -> int:
             print(json.dumps(check_server(args.server), ensure_ascii=False, indent=2))
             return 0
         if args.speak and not args.stt_only:
-            check_dependencies()
+            check_dependencies(args.tts_engine, args.piper_python, args.piper_model, args.tts_fallback)
         if args.text is not None:
             if not args.text.strip():
                 raise ClientError("Pytanie --text nie może być puste.")
@@ -265,9 +313,21 @@ def main(argv=None) -> int:
             print(f"Pi 5 gotowe. Model: {info.get('model', '?')}", flush=True)
         if args.wav is None and not shutil.which("arecord"):
             raise ClientError("Brakuje arecord. Zainstaluj pakiet alsa-utils.")
-        model, recognizer_factory = load_vosk(args.model)
+        isolated = args.stt_mode == "isolated" or (
+            args.stt_mode == "auto" and args.tts_engine == "piper" and args.speak and not args.stt_only)
+        if isolated:
+            model, recognizer_factory = None, None
+            print("Tryb oszczędny: Vosk ładuje się dla każdego nagrania i kończy pracę przed Piperem.", flush=True)
+        else:
+            model, recognizer_factory = load_vosk(args.model)
+
+        def recognize(path):
+            if isolated:
+                return transcribe_isolated(path, args.model, args.audio_diagnostics)
+            return transcribe_wav(path, model, recognizer_factory)
+
         if args.wav is not None:
-            return 0 if handle_text(transcribe_wav(args.wav.expanduser(), model, recognizer_factory), args) else 1
+            return 0 if handle_text(recognize(args.wav.expanduser()), args) else 1
         print(f"Nagrywanie: {args.seconds} s, urządzenie: {args.device}. "
               f"Głośnik: {'włączony' if args.speak and not args.stt_only else 'wyłączony'}.")
         while True:
@@ -288,7 +348,7 @@ def main(argv=None) -> int:
                     record_wav(wav_path, args.device, args.seconds)
                     print("Rozpoznaję mowę...", flush=True)
                     recognition_started = time.monotonic()
-                    text = transcribe_wav(wav_path, model, recognizer_factory)
+                    text = recognize(wav_path)
                     print(f"[rozpoznawanie: {time.monotonic() - recognition_started:.1f} s]", flush=True)
                 ok = handle_text(text, args)
                 if args.once:
