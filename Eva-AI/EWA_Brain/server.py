@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from modules.brain import Brain, OllamaError
@@ -53,5 +54,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"E.W.A. Brain — nasłuch na http://{HOST}:{PORT} (tylko USB)", flush=True)
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    with ThreadingHTTPServer((HOST, PORT), Handler) as server:
+        if os.getenv("EVA_WARMUP", "1") == "1":
+            threading.Thread(target=brain.warmup, name="ewa-warmup", daemon=True).start()
+        else:
+            brain.warmup_state = "disabled"
+        print(f"E.W.A. Brain — nasłuch na http://{HOST}:{PORT} (tylko USB)", flush=True)
+        server.serve_forever()

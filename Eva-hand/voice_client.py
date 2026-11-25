@@ -168,6 +168,23 @@ def say(text, args):
     print(f"[synteza: {synthesis:.1f} s; odtwarzanie: {playback:.1f} s]", flush=True)
 
 
+def show_ai_timings(result: dict) -> None:
+    metrics = result.get("timings")
+    if not isinstance(metrics, dict):
+        return
+    parts = []
+    for key, label in (("load_s", "ładowanie"), ("prompt_s", "instrukcje/pytanie"),
+                       ("generation_s", "generowanie")):
+        value = metrics.get(key)
+        if type(value) in (int, float) and math.isfinite(value) and value >= 0:
+            parts.append(f"{label}: {value:.2f} s")
+    count = metrics.get("output_tokens")
+    if type(count) is int and count >= 0:
+        parts.append(f"tokeny całego JSON: {count}")
+    if parts:
+        print("[AI: " + "; ".join(parts) + "]", flush=True)
+
+
 def handle_text(text: str, args) -> bool:
     text = text.strip()
     if not text:
@@ -183,6 +200,7 @@ def handle_text(text: str, args) -> bool:
     if result.get("memory") not in (None, "none"):
         print("[pamięć:", str(result["memory"]) + "]", flush=True)
     print(f"[czas oczekiwania na API: {time.monotonic() - start:.1f} s]", flush=True)
+    show_ai_timings(result)
     if args.speak:
         try:
             say(result["text"], args)
@@ -310,7 +328,8 @@ def main(argv=None) -> int:
             return 0 if handle_text(args.text, args) else 1
         if not args.stt_only:
             info = check_server(args.server)
-            print(f"Pi 5 gotowe. Model: {info.get('model', '?')}", flush=True)
+            print(f"Pi 5 połączone. Model: {info.get('model', '?')}; "
+                  f"rozgrzewanie: {info.get('warmup', 'brak danych')}", flush=True)
         if args.wav is None and not shutil.which("arecord"):
             raise ClientError("Brakuje arecord. Zainstaluj pakiet alsa-utils.")
         isolated = args.stt_mode == "isolated" or (

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import statistics
 import sys
 import tempfile
 import time
@@ -51,17 +52,22 @@ def main(argv=None):
     modes.add_argument("--legacy", action="store_true", help="tylko dawny format 9 wymaganych pól")
     modes.add_argument("--warmup", action="store_true", help="jedno pytanie rozgrzewające model i instrukcje")
     parser.add_argument("--full", action="store_true", help="dodatkowo język, niejasne pytanie i propozycja pamięci")
+    parser.add_argument("--repeat", type=int, default=1, help="powtórzenia zestawu pytań: 1–10")
     args = parser.parse_args(argv)
+    if not 1 <= args.repeat <= 10:
+        parser.error("--repeat musi być w zakresie 1–10")
     if args.model:
         b.MODEL = args.model
     model_info()
     print("Nie wymuszam rozładowania modelu. Pierwszy test może mieć zimny lub ciepły start.", flush=True)
     print("To test bez historii rozmowy i bez audio. Oceniaj treść względem oczekiwanego wyniku.", flush=True)
     errors = 0
+    samples = {}
     try:
         with tempfile.TemporaryDirectory(prefix="ewa-benchmark-") as folder:
             projects = Path(folder) / "projects.json"
-            shutil.copy2(b.PROJECTS_PATH, projects)
+            source = b.PROJECTS_PATH if b.PROJECTS_PATH.exists() else b.PROJECTS_PATH.with_name("projects.example.json")
+            shutil.copy2(source, projects)
             memory = b.MemoryStore(projects, Path(folder) / "test.db")
             cases = list(QUICK_CASES)
             if args.warmup:
@@ -82,7 +88,16 @@ def main(argv=None):
             for compact in formats:
                 label = "compact (2 wymagane pola)" if compact else "legacy (9 wymaganych pól)"
                 print(f"\nFORMAT: {label}", flush=True)
-                for number, (question, expected) in enumerate(cases, 1):
+                samples[label] = []
+                if args.compare:
+                    print("Rozgrzewam model i instrukcje tego formatu; poza porównaniem czasów.", flush=True)
+                    try:
+                        b.call_ollama([], "Cześć.", memory.get_context("Cześć.", []), compact=compact)
+                    except b.OllamaError as exc:
+                        errors += 1
+                        print(f"BŁĄD rozgrzewania: {exc}; pomijam ten format.", flush=True)
+                        continue
+                for number, (question, expected) in enumerate(cases * args.repeat, 1):
                     print(f"\nTEST {number}: {question}", flush=True)
                     context = memory.get_context(question, [])
                     start = time.monotonic()
@@ -92,13 +107,22 @@ def main(argv=None):
                         errors += 1
                         print(f"BŁĄD: {exc}", flush=True)
                         continue
-                    print_metrics(answer, time.monotonic() - start)
+                    wall = time.monotonic() - start
+                    samples[label].append(wall)
+                    print_metrics(answer, wall)
                     print("E.W.A. (odpowiedź testowa):", answer["text"])
                     print("Oczekiwane:", expected)
                     print("Typ:", answer["type"], "| propozycja pamięci:", answer["memory_action"], flush=True)
     except (OSError, ValueError) as exc:
         print(f"Błąd danych testowych: {exc}", file=sys.stderr)
         return 1
+    for label, times in samples.items():
+        if times:
+            print(f"\n{label}: mediana {statistics.median(times):.2f} s, "
+                  f"zakres {min(times):.2f}–{max(times):.2f} s, poprawne odpowiedzi JSON: {len(times)}.")
+    if args.compare:
+        print("Porównanie po rozgrzaniu obu formatów; odrzucone próby nie wchodzą do mediany. "
+              "Obciążenie, temperatura CPU i różna długość odpowiedzi nadal wpływają na wynik.")
     print("\nKoniec. Kod wyjścia sprawdza błędy techniczne, nie poprawność odpowiedzi AI.", flush=True)
     return 1 if errors else 0
 

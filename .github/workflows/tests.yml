@@ -1,0 +1,30 @@
+name: Python tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Compile application
+        run: python -m compileall -q Eva-AI Eva-hand instalation
+      - name: Brain and API
+        working-directory: Eva-AI/EWA_Brain
+        run: python -m unittest discover -s tests -v
+      - name: Voice client
+        run: python -m unittest discover -s Eva-hand/tests -v
+      - name: Installation and backups
+        run: python -m unittest discover -s instalation/tests -v

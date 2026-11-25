@@ -1,6 +1,8 @@
 # E.W.A. Brain v1.0 — pamięć hybrydowa na Raspberry Pi 5
 
-**Cel:** lokalny Qwen (`ollama run ewa` jest już skonfigurowany), osobny JSON na projekty/aliasy oraz osobna baza SQLite na rozmowy, oczekujące potwierdzenia i audyt zmian. Raspberry Pi 3 będzie później wysyłało tekst przez USB/HTTP. **Nie ma jeszcze STT/TTS ani sterowania urządzeniami.**
+**Aktualizacja działającego projektu:** użyj [instrukcji etapu 5](../../START_ETAP5_SZYBKOSC.md). Poniższy opis instalacji z ZIP dotyczy wcześniejszej samodzielnej paczki; obecna ścieżka w repo to `~/EVA/Eva-AI/EWA_Brain`.
+
+**Cel:** lokalny Qwen (`ollama run ewa` jest już skonfigurowany), osobny JSON na projekty/aliasy oraz osobna baza SQLite na rozmowy, oczekujące potwierdzenia i audyt zmian. Raspberry Pi 3 wysyła tekst rozpoznany przez Vosk przez USB/HTTP i odczytuje odpowiedź przez Piper lub eSpeak. **Sterowanie urządzeniami nie jest jeszcze zintegrowane.**
 
 ## 1. Instalacja na Pi 5
 

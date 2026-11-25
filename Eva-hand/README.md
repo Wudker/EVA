@@ -1,6 +1,6 @@
 # Eva-hand — mikrofon i głośnik na Pi 3, AI na Pi 5
 
-Zacznij od [instrukcji etapu 2](../START_ETAP2_GLOS_GLOSNIK.md).
+Aktualizacja działającej Ewy: [etap 5 — szybkość odpowiedzi](../START_ETAP5_SZYBKOSC.md).
 
 Nowe: `--speak` odczytuje pole `text` odpowiedzi przez eSpeak NG i ALSA.
 `--tts-test` sprawdza sam głośnik, a `--list-outputs` pokazuje wyjścia audio.
@@ -13,8 +13,14 @@ utworzonym na podstawie `audio.example.json`. Parametry CLI mają pierwszeństwo
 Domyślnie Enter rozpoczyna 8 sekund nagrania mono PCM 16 bit / 16 kHz.
 Vosk rozpoznaje tekst, a program wysyła go do `/chat` istniejącego
 `EWA_Brain`. ReSpeaker jest podłączony do Pi 3, nie do komputera z SSH.
-Model jest ładowany raz; na Pi 5 wysyłany jest tekst, nie plik audio.
+W trybie `persistent` Vosk ładuje się raz. Tryb `auto` przy włączonym Piperze
+wybiera `isolated`: ładuje Vosk dla każdego nagrania i zwalnia jego RAM przed TTS.
+Na Pi 5 wysyłany jest tekst, nie plik audio.
 Nie ma jeszcze wykrywania ciszy ani słowa wybudzającego.
+
+Klient pokazuje czas API oraz dostępne pomiary Ollamy: ładowanie modelu,
+przetwarzanie instrukcji/pytania, generowanie i liczbę tokenów całego JSON.
+Przez głośnik odczytuje wyłącznie odpowiedź. Stary serwer bez pomiarów nadal działa.
 
 ## Najważniejsze polecenia (w katalogu Eva-hand)
 
