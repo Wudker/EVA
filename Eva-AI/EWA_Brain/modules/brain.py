@@ -7,10 +7,13 @@ import math
 import os
 import re
 import threading
+import time
 import urllib.error
 import urllib.request
 from contextlib import closing
 from pathlib import Path
+from .calculator import calculate
+from .smartroom import DisabledLights, parse_command, target_from
 from .memory_manager import (MemoryStore, db_connect, recent, get_pending, set_pending,
                              clear_pending, save_turn, normal, SID_RE)
 
@@ -214,12 +217,13 @@ def _safe_alias_from_query(alias: str, question: str) -> bool:
 
 class Brain:
     def __init__(self, projects_path: Path = PROJECTS_PATH, db_path: Path = DB_PATH,
-                 model_client=None):
+                 model_client=None, lights=None):
         self.store = MemoryStore(projects_path, db_path)
         self.db_path = Path(db_path)
         self.model_client = model_client or call_ollama
         self.lock = threading.RLock()
         self.warmup_state = "not_started"
+        self.lights = lights if lights is not None else DisabledLights()
 
     def warmup(self) -> None:
         """Rozgrzej model i instrukcje raz, bez historii, potwierdzeń i zapisów faktów."""
@@ -280,7 +284,7 @@ class Brain:
                         save_turn(db, session_id, text, message)
                         return {"type": "answer", "text": message, "session_id": session_id, "memory": "rejected"}
                     clear_pending(db, session_id)  # nowy temat
-                elif kind == "clarification":
+                elif kind == "clarification" and payload.get("tool") != "led":
                     if short in NO:
                         clear_pending(db, session_id)
                         message = "Rozumiem. Doprecyzuj proszę nazwę projektu."
@@ -302,6 +306,16 @@ class Brain:
                                           "Brak narzędzi do sterowania urządzeniami.")
                     else:
                         clear_pending(db, session_id)
+            lighting = self._handle_lights(text, pending, db, session_id)
+            if lighting is not None:
+                result = {**lighting, "session_id": session_id, "memory": "none"}
+                save_turn(db, session_id, text, result["text"])
+                return result
+            calculation = calculate(text)
+            if calculation is not None:
+                result = {**calculation, "session_id": session_id, "memory": "none"}
+                save_turn(db, session_id, text, result["text"])
+                return result
             context = self.store.get_context(text, history)
             try:
                 response = self.model_client(history, text, context, confirmed_note)
@@ -341,6 +355,28 @@ class Brain:
                 self._handle_memory_proposal(response, text, db, session_id, result)
             save_turn(db, session_id, text, result["text"])
             return result
+
+    def _handle_lights(self, text, pending, db, session_id):
+        command = parse_command(text)
+        if pending and pending[0] == "clarification" and pending[1].get("tool") == "led":
+            clear_pending(db, session_id)
+            if normal(text).strip(" .!?") in NO:
+                return {"type": "answer", "text": "Anulowałam polecenie LED.", "source": "mqtt"}
+            target = target_from(text)
+            if command is None and target:
+                if pending[1].get("expires_at", 0) < time.time():
+                    return {"type": "clarify", "text": "Polecenie oświetlenia wygasło. Powtórz całe polecenie.", "source": "mqtt"}
+                command = {**pending[1], "target": target}
+        if command is None:
+            return None
+        if "error" in command:
+            return {"type": "clarify", "text": command["error"], "source": "mqtt"}
+        if not self.lights.enabled:
+            return self.lights.execute(command)
+        if command["target"] is None:
+            set_pending(db, session_id, "clarification", {**command, "tool": "led", "expires_at": time.time() + 60})
+            return {"type": "clarify", "text": "Które LED-y: przy łóżku czy na półce?", "source": "mqtt"}
+        return self.lights.execute(command)
 
     def _handle_memory_proposal(self, response: dict, question: str, db,
                                 session_id: str, result: dict) -> None:

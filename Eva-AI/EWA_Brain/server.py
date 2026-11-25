@@ -1,17 +1,26 @@
-"""E.W.A. Brain API: tylko USB (domyślnie 10.77.77.1:8000), bez MQTT/STT/TTS."""
+"""E.W.A. Brain API: USB, lokalny model i opcjonalne sterowanie LED przez MQTT."""
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from modules.brain import Brain, OllamaError
+from modules.api_auth import read_key
+from modules.smartroom import read_config, load_lights
 
 HOST = os.getenv("EVA_USB_IP", "10.77.77.1")
 PORT = int(os.getenv("EVA_PORT", "8000"))
-brain = Brain()
+CONFIG = Path(__file__).resolve().parent / "config"
+API_KEY = read_key(CONFIG / "api.key")
+MQTT_CONFIG = read_config(CONFIG / "mqtt.local.json")
+if MQTT_CONFIG is not None and API_KEY is None:
+    raise RuntimeError("MQTT wymaga klucza HTTP. Uruchom python3 instalation/configure_mqtt.py")
+brain = Brain(lights=load_lights(MQTT_CONFIG))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
@@ -29,11 +38,16 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/health":
             return self._reply(404, {"error": "Not found"})
         info = brain.health()
+        info["auth_required"] = API_KEY is not None
+        info["mqtt_enabled"] = brain.lights.enabled
         self._reply(200 if info["status"] == "ok" else 503, info)
 
     def do_POST(self):
         if self.path != "/chat":
             return self._reply(404, {"error": "Not found"})
+        if API_KEY is not None and not hmac.compare_digest(
+                self.headers.get("Authorization", "").encode("utf-8"), ("Bearer " + API_KEY).encode("ascii")):
+            return self._reply(401, {"error": "Brak poprawnego klucza API. Skopiuj config/api.key z Pi 5 do Eva-hand/api.key na Pi 3."})
         try:
             size = int(self.headers.get("Content-Length", "0"))
             if not 1 <= size <= 4096:

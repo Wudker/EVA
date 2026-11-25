@@ -59,7 +59,7 @@ Nie
 /exit
 ```
 
-Pamiętaj: to test języka i pamięci — **E.W.A. nie potrafi jeszcze faktycznie odczytać statusu MQTT**. Model ma o tym powiedzieć, a nie wymyślać status.
+To test języka i pamięci. Opcjonalne sterowanie i odczyt MQTT konfiguruje się według [START_ETAP7_MQTT.md](../../START_ETAP7_MQTT.md). Stan sprzętu pochodzi z MQTT, nie z modelu.
 
 Dla lepszych wyników sprawdzaj osobno nowe wiadomości (pamięć ostatnich 8 wypowiedzi) i zapamiętane fakty (`projects.json`). Model Qwen2.5 3B jest niewielki; nie zawsze prawidłowo sklasyfikuje wypowiedź — dlatego decyzję o zapisie podejmuje kod Pythona.
 
@@ -68,7 +68,7 @@ Dla lepszych wyników sprawdzaj osobno nowe wiadomości (pamięć ostatnich 8 wy
 - **Nowa, jednoznaczna informacja o *znanym* projekcie**: Qwen proponuje `add_fact`; Python sprawdza, czy wypowiedź rzeczywiście wymienia projekt i przekazuje dany fakt. Jeśli tak, zapisuje informację automatycznie.
 - **Informacja niepewna** (np. „chyba”), **nowy projekt** lub **korekta istniejącej informacji**: E.W.A. pyta o potwierdzenie. „Tak” zapisuje, „nie” odrzuca. Pytanie pozostaje oczekujące po restarcie.
 - **Pomyłka STT** (np. „small rum”): gdy Qwen zapyta „Czy chodzi Ci o SmartRoom?”, odpowiedź „tak” pozwala automatycznie zapisać *potwierdzony* alias, ale tylko jeśli wariant nazwy naprawdę był w wypowiedzi.
-- **Zwykłe pytania, prośby o włączenie urządzenia** i **wywnioskowane przez model fakty** nie powinny automatycznie zmieniać bazy. Bez odpowiedniego modułu Pi 3 żadne polecenie MQTT nie jest wykonywane.
+- **Zwykłe pytania, prośby o włączenie urządzenia** i **wywnioskowane przez model fakty** nie powinny automatycznie zmieniać bazy projektów. Skonfigurowany moduł MQTT na Pi 5 obsługuje wyłącznie jawne polecenia oświetlenia z listy w instrukcji demo.
 
 Zapis faktów korzysta z zabezpieczeń heurystycznych. Nie jest to jeszcze w pełni niezawodna weryfikacja faktów; pod kontrolą powinno pozostawać `projects.json` i dziennik zmian.
 
@@ -153,7 +153,7 @@ Serwis korzysta z `User=soul`, `/home/soul/EWA_Brain`, `EVA_MODEL=ewa` oraz `EVA
 
 - Ollama pozostaje przy `http://127.0.0.1:11434` (nie otwieraj jej API na świat).
 - Serwer E.W.A. wiąże się domyślnie **wyłącznie** z adresem USB `10.77.77.1:8000`. Nie ustawiaj `0.0.0.0` bez zabezpieczeń.
-- Prototyp nie ma jeszcze uwierzytelniania HTTP. **Przed dodaniem funkcji sterujących MQTT trzeba dodać uwierzytelnianie i listę dozwolonych działań**.
+- Po skonfigurowaniu MQTT `/chat` wymaga klucza `config/api.key` w nagłówku `Authorization: Bearer ...`. Klient odczytuje go z `Eva-hand/api.key`. Moduł MQTT ma stałą listę dwóch obwodów i dozwolonych działań; model nie wybiera dowolnych tematów ani nie wykonuje komend powłoki. Ręczne przykłady `curl` powyżej wymagają wtedy tego nagłówka.
 - Nie zapisuj haseł i tokenów w `projects.json`. Walidacja blokuje część oczywistych sekretów, lecz nie wszystkie możliwe przypadki.
 - JSON z projektu jest traktowany jako dane kontekstowe, nie jako instrukcje modelu. LLM nie ma dowolnego dostępu do plików.
 - Zależnie od obciążenia Pi 5 generowanie odpowiedzi Qwena na CPU może potrwać kilkanaście lub kilkadziesiąt sekund.

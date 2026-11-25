@@ -65,11 +65,11 @@ class LatencyTests(unittest.TestCase):
                 entered.set()
                 if not release.wait(3):
                     raise RuntimeError("test timeout")
-            return {"type": "answer", "text": "Osiem."}
+            return {"type": "answer", "text": "Cześć."}
 
         def chat():
             chat_started.set()
-            result.append(self.brain.handle("Ile to trzy plus pięć?"))
+            result.append(self.brain.handle("Przywitaj się."))
             chat_finished.set()
 
         self.brain.model_client = model
@@ -90,7 +90,7 @@ class LatencyTests(unittest.TestCase):
                 user.join(3)
         self.assertFalse(warm.is_alive())
         self.assertFalse(user.is_alive())
-        self.assertEqual(result[0]["text"], "Osiem.")
+        self.assertEqual(result[0]["text"], "Cześć.")
 
     def test_health_requires_the_configured_model_tag(self):
         with patch.object(b, "MODEL", "ewa:fast"), patch.object(b, "make_request_json",
@@ -117,17 +117,17 @@ class LatencyTests(unittest.TestCase):
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         url = "http://127.0.0.1:" + str(server.server_port)
         request = urllib.request.Request(url + "/chat", data=json.dumps({
-            "text": "Ile to trzy plus pięć?", "session_id": "test"}).encode(),
+            "text": "Przywitaj się.", "session_id": "test"}).encode(),
             headers={"Content-Type": "application/json"})
         raw = {"done": True, "done_reason": "stop", "message": {"content":
-               '{"type":"answer","text":"Osiem."}'}, "eval_count": 12, "eval_duration": 2_000_000_000}
+               '{"type":"answer","text":"Cześć."}'}, "eval_count": 12, "eval_duration": 2_000_000_000}
         try:
             with patch.object(b, "make_request_json", return_value=raw) as ollama, \
                  patch.object(server_module.Handler, "log_message"):
                 with opener.open(request, timeout=2) as response:
                     result = json.load(response)
                     self.assertEqual(response.status, 200)
-                self.assertEqual(result["text"], "Osiem.")
+                self.assertEqual(result["text"], "Cześć.")
                 self.assertEqual(result["timings"]["generation_s"], 2)
                 self.assertEqual(ollama.call_args.args[1]["format"]["required"], ["type", "text"])
                 ollama.assert_called_once()

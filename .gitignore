@@ -22,6 +22,8 @@ token.json
 
 # Lokalna konfiguracja audio i prywatne kopie E.W.A.
 **/audio.local.json
+**/mqtt.local.json
+**/config/.mqtt-*
 **/*.local.env
 **/ewa-backups/
 ewa-state-*.tar.gz

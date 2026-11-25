@@ -31,9 +31,19 @@ class ClientError(Exception):
 
 def request_json(url: str, payload: dict | None, timeout: float) -> dict:
     data = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    headers = {"Content-Type": "application/json; charset=utf-8"}
+    key_path = ROOT / "api.key"
+    if payload is not None and key_path.exists():
+        try:
+            key = key_path.read_text(encoding="ascii").strip()
+            if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", key):
+                raise ValueError("niepoprawny format")
+        except (OSError, ValueError, UnicodeError) as exc:
+            raise ClientError("Nie można odczytać poprawnego Eva-hand/api.key. Skopiuj go ponownie z Pi 5.") from exc
+        headers["Authorization"] = "Bearer " + key
     request = urllib.request.Request(
         url, data=data, method="GET" if payload is None else "POST",
-        headers={"Content-Type": "application/json; charset=utf-8"},
+        headers=headers,
     )
     # Ruch do lokalnego Pi ma iść bezpośrednio, także przy ustawionym HTTP_PROXY.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -202,6 +212,10 @@ def handle_text(text: str, args) -> bool:
     if result.get("memory") not in (None, "none"):
         print("[pamięć:", str(result["memory"]) + "]", flush=True)
     print(f"[czas oczekiwania na API: {time.monotonic() - start:.1f} s]", flush=True)
+    if result.get("source") == "calculator":
+        print(f"[kalkulator: {result.get('expression') or 'sprawdzenie działania'}]", flush=True)
+    elif result.get("source") == "mqtt":
+        print(f"[MQTT: {result.get('device_status', 'wybór polecenia')}]", flush=True)
     show_ai_timings(result)
     if args.speak:
         try:

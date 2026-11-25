@@ -29,6 +29,16 @@ class AITimings(unittest.TestCase):
                 client.show_ai_timings(answer)
             self.assertEqual(output.getvalue(), "")
 
+    def test_calculator_expression_is_displayed_but_only_answer_is_spoken(self):
+        args = client.parse_args(["--speak"])
+        result = {"text": "Wynik to 12.", "source": "calculator", "expression": "3 * 3 + 3"}
+        with patch.object(client, "ask_brain", return_value=result), \
+             patch.object(client, "say") as speaker, contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertTrue(client.handle_text("ile tu trzy razy trzy plus trzy", args))
+        speaker.assert_called_once_with("Wynik to 12.", args)
+        self.assertIn("[kalkulator: 3 * 3 + 3]", output.getvalue())
+        self.assertNotIn("[AI:", output.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
