@@ -18,7 +18,7 @@ import wave
 from pathlib import Path
 
 from speech_output import (SpeechError, check_dependencies, speak, run_audio,
-                           DEFAULT_PIPER_PYTHON, DEFAULT_PIPER_MODEL)
+                           DEFAULT_PIPER_PYTHON, DEFAULT_PIPER_MODEL, DEFAULT_TTS_SERVER, tts_url)
 
 ROOT = Path(__file__).resolve().parent
 RATE = 16000
@@ -159,13 +159,15 @@ def transcribe_isolated(path: Path, model_path: Path, diagnostics=False) -> str:
 def speech_options(args):
     return dict(engine=args.tts_engine, piper_python=args.piper_python,
                 piper_model=args.piper_model, length_scale=args.piper_length_scale,
-                fallback=args.tts_fallback, diagnostics=args.audio_diagnostics)
+                fallback=args.tts_fallback, diagnostics=args.audio_diagnostics,
+                tts_server=args.tts_server)
 
 
 def say(text, args):
     synthesis, playback = speak(text, args.output_device, args.voice, args.speech_rate,
                                **speech_options(args))
-    print(f"[synteza: {synthesis:.1f} s; odtwarzanie: {playback:.1f} s]", flush=True)
+    label = "synteza i transfer" if args.tts_engine == "piper-remote" else "synteza"
+    print(f"[{label}: {synthesis:.1f} s; odtwarzanie: {playback:.1f} s]", flush=True)
 
 
 def show_ai_timings(result: dict) -> None:
@@ -229,7 +231,8 @@ def parse_args(argv=None):
     parser.add_argument("--output-device", default="default", help="wyjście ALSA dla głośnika")
     parser.add_argument("--voice", default="pl", help="głos eSpeak NG, domyślnie pl")
     parser.add_argument("--speech-rate", type=int, default=160, help="tempo mowy: 80–300")
-    parser.add_argument("--tts-engine", choices=("espeak", "piper"), default="espeak")
+    parser.add_argument("--tts-engine", choices=("espeak", "piper", "piper-remote"), default="espeak")
+    parser.add_argument("--tts-server", default=DEFAULT_TTS_SERVER, help="serwer Pipera na Pi 5, bez /tts")
     parser.add_argument("--piper-python", default=DEFAULT_PIPER_PYTHON)
     parser.add_argument("--piper-model", default=DEFAULT_PIPER_MODEL)
     parser.add_argument("--piper-length-scale", type=float, default=1.0,
@@ -237,7 +240,7 @@ def parse_args(argv=None):
     parser.add_argument("--tts-fallback", action=argparse.BooleanOptionalAction, default=True,
                         help="po błędzie syntezy Piper użyj eSpeak NG")
     parser.add_argument("--stt-mode", choices=("auto", "isolated", "persistent"), default="auto",
-                        help="auto: oddzielny proces Vosk dla mowy Piper; oszczędza RAM")
+                        help="auto: oddzielny Vosk dla lokalnego Pipera; stały Vosk dla piper-remote")
     parser.add_argument("--audio-diagnostics", action=argparse.BooleanOptionalAction, default=False,
                         help="próbkuj RSS procesów audio oraz dostępny RAM i wolny swap")
     speech_mode = parser.add_mutually_exclusive_group()
@@ -261,7 +264,7 @@ def parse_args(argv=None):
                        "seconds": int, "speech_rate": int, "speak": bool,
                        "tts_engine": str, "piper_python": str, "piper_model": str,
                        "piper_length_scale": (int, float), "tts_fallback": bool,
-                       "stt_mode": str, "audio_diagnostics": bool}
+                       "stt_mode": str, "audio_diagnostics": bool, "tts_server": str}
             if not isinstance(config, dict) or set(config) - set(allowed):
                 raise ValueError("dozwolone klucze: " + ", ".join(allowed))
             for key, value in config.items():
@@ -284,8 +287,12 @@ def parse_args(argv=None):
         parser.error("--timeout musi być w zakresie 1–3600 s")
     if not 80 <= args.speech_rate <= 300:
         parser.error("--speech-rate musi być w zakresie 80–300")
-    if args.tts_engine not in ("espeak", "piper") or args.stt_mode not in ("auto", "isolated", "persistent"):
+    if args.tts_engine not in ("espeak", "piper", "piper-remote") or args.stt_mode not in ("auto", "isolated", "persistent"):
         parser.error("Niepoprawny tts_engine lub stt_mode w konfiguracji")
+    try:
+        args.tts_server = tts_url(args.tts_server)
+    except SpeechError as exc:
+        parser.error(str(exc))
     if not math.isfinite(args.piper_length_scale) or not 0.5 <= args.piper_length_scale <= 2:
         parser.error("--piper-length-scale musi być w zakresie 0.5–2")
     for value in (args.piper_python, args.piper_model):

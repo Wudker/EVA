@@ -19,4 +19,6 @@ if [[ ! -x .venv/bin/python ]]; then python3 -m venv .venv; fi
 if [[ ! -s pl_PL-gosia-medium.onnx || ! -s pl_PL-gosia-medium.onnx.json ]]; then
     .venv/bin/python -m piper.download_voices pl_PL-gosia-medium
 fi
-echo "Piper gotowy. W repozytorium uruchom: python3 instalation/configure_piper.py"
+echo "Piper gotowy. Dalsze polecenia uruchamiaj z katalogu repozytorium:"
+echo "Lokalny głos na Pi 3: python3 instalation/configure_piper.py"
+echo "Serwer głosu na Pi 5: patrz START_ETAP6_AUDIO.md (bez configure_piper.py)."
