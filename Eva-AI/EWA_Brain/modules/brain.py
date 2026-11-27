@@ -14,6 +14,9 @@ from contextlib import closing
 from pathlib import Path
 from .calculator import calculate
 from .smartroom import DisabledLights, parse_command, target_from
+from .light_commands import (LIGHT_PROPERTIES, LIGHT_RULES, command_from_ai,
+                             can_change_lights, mentioned_targets, command_description,
+                             percent_from, raw_brightness, normalize, LIGHT_WORDS)
 from .memory_manager import (MemoryStore, db_connect, recent, get_pending, set_pending,
                              clear_pending, save_turn, normal, SID_RE)
 
@@ -36,6 +39,7 @@ LEGACY_SCHEMA = {
         "memory_project_id": {"type": "string"},
         "memory_value": {"type": "string"},
         "memory_old_value": {"type": "string"},
+        **LIGHT_PROPERTIES,
     },
     "required": ["type", "text", "interpretation", "clarification_project_id",
                  "clarification_alias", "memory_action", "memory_project_id",
@@ -90,6 +94,8 @@ def build_payload(history: list[dict], text: str, context: str, note: str = "",
                   *, compact: bool | None = None) -> dict:
     compact = compact_mode() if compact is None else compact
     system = (ROOT / "config" / "brain_rules.txt").read_text(encoding="utf-8")
+    system = system.replace("nie masz jeszcze narzędzi MQTT/Spotify/Calendar.",
+                            "wykonanie narzędzi potwierdza kod serwera.")
     if compact:
         # Zmieniamy tylko instrukcję starego formatu, bez nadpisywania pliku użytkownika.
         system = system.replace(OLD_FORMAT_RULE, "")
@@ -224,6 +230,7 @@ class Brain:
         self.lock = threading.RLock()
         self.warmup_state = "not_started"
         self.lights = lights if lights is not None else DisabledLights()
+        self.light_context = {}
 
     def warmup(self) -> None:
         """Rozgrzej model i instrukcje raz, bez historii, potwierdzeń i zapisów faktów."""
@@ -303,7 +310,7 @@ class Brain:
                                 pass  # konflikt / za długi alias: bez trwałego wpisu
                         confirmed_note = (f"Użytkownik potwierdził interpretację wypowiedzi {source!r} "
                                           f"jako projektu {project_id!r}. Nie pytaj ponownie o to samo. "
-                                          "Brak narzędzi do sterowania urządzeniami.")
+                                          "Wykonanie poleceń sprzętowych potwierdza kod serwera.")
                     else:
                         clear_pending(db, session_id)
             lighting = self._handle_lights(text, pending, db, session_id)
@@ -313,10 +320,17 @@ class Brain:
                 return result
             calculation = calculate(text)
             if calculation is not None:
+                self.light_context.pop(session_id, None)
                 result = {**calculation, "session_id": session_id, "memory": "none"}
                 save_turn(db, session_id, text, result["text"])
                 return result
             context = self.store.get_context(text, history)
+            if self.lights.enabled:
+                last_target = self._light_target(session_id)
+                confirmed_note += "\n" + LIGHT_RULES + "\n"
+                confirmed_note += (f"Ostatni obwód LED w tej sesji: {last_target}. "
+                                   "Możesz użyć go dla krótkiego dalszego polecenia."
+                                   if last_target else "Nie ma bieżącego obwodu LED. Nie wybieraj go z dawnej historii.")
             try:
                 response = self.model_client(history, text, context, confirmed_note)
             except (OllamaError, ValueError, KeyError, TypeError) as exc:
@@ -324,6 +338,14 @@ class Brain:
             answer = response.get("text", "").strip()
             if not answer:
                 raise OllamaError("Model zwrócił pusty tekst")
+            lighting = self._handle_model_lights(response, text, db, session_id)
+            if lighting is not None:
+                result = {**lighting, "session_id": session_id, "memory": "none", "interpretation_source": "ai"}
+                if response.get("_ollama_timings"):
+                    result["timings"] = response["_ollama_timings"]
+                save_turn(db, session_id, text, result["text"])
+                return result
+            self.light_context.pop(session_id, None)
             result = {"type": response.get("type", "answer"), "text": answer,
                       "session_id": session_id, "memory": "none"}
             if response.get("_ollama_timings"):
@@ -359,24 +381,98 @@ class Brain:
     def _handle_lights(self, text, pending, db, session_id):
         command = parse_command(text)
         if pending and pending[0] == "clarification" and pending[1].get("tool") == "led":
+            payload = pending[1]
             clear_pending(db, session_id)
-            if normal(text).strip(" .!?") in NO:
+            short = normalize(text)
+            if short in NO:
+                self.light_context.pop(session_id, None)
                 return {"type": "answer", "text": "Anulowałam polecenie LED.", "source": "mqtt"}
             target = target_from(text)
-            if command is None and target:
-                if pending[1].get("expires_at", 0) < time.time():
+            continuation = command is None and (target or short in YES)
+            number = None
+            if command is None and payload.get("value") is None and payload.get("action") in ("brightness", "adjust_brightness"):
+                try:
+                    number = percent_from(re.sub(r"^na ", "", short))
+                    continuation = True
+                except ValueError:
+                    pass
+            if continuation:
+                if payload.get("expires_at", 0) < time.time():
                     return {"type": "clarify", "text": "Polecenie oświetlenia wygasło. Powtórz całe polecenie.", "source": "mqtt"}
-                command = {**pending[1], "target": target}
+                command = dict(payload)
+                if target:
+                    command["target"] = target
+                if number is not None:
+                    command["value"] = raw_brightness(number) if command["action"] == "brightness" else number
+                if short in YES and payload.get("needs_confirmation"):
+                    command.pop("needs_confirmation", None)
+            elif command and command.get("action") == payload.get("action") and command.get("target") is None:
+                command["target"] = payload.get("target")
         if command is None:
             return None
+        return self._finish_lights(command, db, session_id)
+
+    def _light_target(self, session_id):
+        entry = self.light_context.get(session_id)
+        if entry and entry["expires_at"] >= time.time():
+            return entry["target"]
+        self.light_context.pop(session_id, None)
+        return None
+
+    def _finish_lights(self, command, db, session_id):
         if "error" in command:
             return {"type": "clarify", "text": command["error"], "source": "mqtt"}
         if not self.lights.enabled:
             return self.lights.execute(command)
+        if command.get("target") is None:
+            command["target"] = self._light_target(session_id)
+        question = None
         if command["target"] is None:
-            set_pending(db, session_id, "clarification", {**command, "tool": "led", "expires_at": time.time() + 60})
-            return {"type": "clarify", "text": "Które LED-y: przy łóżku czy na półce?", "source": "mqtt"}
+            question = "Które LED-y: przy łóżku, na półce / szafce czy wszystkie?"
+        elif command.get("value") is None and command["action"] != "status":
+            question = ("Jaką jasność ustawić? Podaj od zera do stu procent."
+                        if command["action"] == "brightness" else "Podaj pełne polecenie LED wraz z wartością.")
+        elif command.get("needs_confirmation"):
+            question = "Czy mam " + command_description(command) + "?"
+        if question:
+            set_pending(db, session_id, "clarification", {
+                **command, "tool": "led", "expires_at": command.get("expires_at", time.time() + 60)})
+            return {"type": "clarify", "text": question, "source": "mqtt"}
+        # Kontekst jest osobny dla każdej rozmowy i wygasa po dwóch minutach lub zmianie tematu.
+        now = time.time()
+        self.light_context = {key: value for key, value in self.light_context.items() if value["expires_at"] >= now}
+        if len(self.light_context) >= 100 and session_id not in self.light_context:
+            self.light_context.pop(next(iter(self.light_context)))
+        self.light_context[session_id] = {"target": command["target"], "expires_at": now + 120}
         return self.lights.execute(command)
+
+    def _handle_model_lights(self, response, text, db, session_id):
+        try:
+            command = command_from_ai(response)
+        except ValueError:
+            return {"type": "clarify", "text": "Nie odczytałam poprawnego polecenia LED. Podaj urządzenie i działanie.", "source": "mqtt"}
+        if command is None:
+            if can_change_lights(text) and re.search(LIGHT_WORDS, normalize(text)):
+                return {"type": "clarify", "text": "Nie odczytałam jednoznacznego polecenia LED. Podaj jedno działanie i obwód: półka / szafka, łóżko albo wszystkie.", "source": "mqtt"}
+            return None
+        if command["action"] != "status" and not can_change_lights(text):
+            return {"type": "answer", "text": "Nie potraktowałam tej wypowiedzi jako polecenia zmiany oświetlenia.", "source": "mqtt"}
+        targets = mentioned_targets(text)
+        last_target = self._light_target(session_id)
+        if targets:
+            # Jawnie wskazane urządzenie ma pierwszeństwo przed sugestią modelu.
+            command["target"] = next(iter(targets))
+        elif command["target"] == "all" and last_target != "all":
+            command["target"] = None
+        elif command["target"] and command["target"] != last_target:
+            command["needs_confirmation"] = True
+        light_hint = re.search(LIGHT_WORDS + r"|\b(?:jasniej|ciemniej|rozjasnij|przyciemnij|sciemnij|podswietl|oswietl|rozswietl|jasnosc|zapal|zgas|zaswiec)\b", normalize(text))
+        if (not targets and re.search(r"\b(?:na|w|przy|pod|nad) [a-z]+\b", normalize(text)) or
+                not light_hint and targets not in ({"bed"}, {"shelf"})):
+            command["needs_confirmation"] = True
+        if response.get("type") == "clarify":
+            command["needs_confirmation"] = True
+        return self._finish_lights(command, db, session_id)
 
     def _handle_memory_proposal(self, response: dict, question: str, db,
                                 session_id: str, result: dict) -> None:

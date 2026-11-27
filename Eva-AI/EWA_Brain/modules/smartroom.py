@@ -1,4 +1,4 @@
-"""Dwa obwody LED SmartRoom: jawne polecenia i stan pochodzący z MQTT."""
+"""Sterowanie obwodami LED SmartRoom i odczyt ich rzeczywistego stanu z MQTT."""
 from __future__ import annotations
 
 import json
@@ -7,61 +7,13 @@ import re
 import threading
 import uuid
 
-from .calculator import integer
-from .memory_manager import normal
+from .light_commands import normalize, parse_command, target_from, raw_brightness
 
 AVAILABILITY = "smartroom/workshop/led_controller/availability"
 DEVICES = {"bed": ("przy łóżku", "smartroom/workshop/led_bed"),
            "shelf": ("na półce", "smartroom/workshop/led_shelf")}
 STATE_TOPICS = [AVAILABILITY, *[prefix + suffix for _, prefix in DEVICES.values()
                                for suffix in ("/state", "/brightness/state")]]
-TARGETS = {"bed": {"lozko", "lozka", "przy lozku", "lozku"},
-           "shelf": {"polka", "polke", "polki", "na polce", "polce"}}
-GENERIC = {"", "ledy", "led", "ledow", "swiatlo", "oswietlenie", "swiatla",
-           "ledy w pokoju", "swiatlo w pokoju", "oswietlenie w pokoju"}
-
-
-def normalize(text):
-    return normal(text).replace("ł", "l").strip(" .!?")
-
-
-def target_from(text):
-    text = normalize(text)
-    text = re.sub(r"^(?:ledy|led|ledow|swiatlo|swiatla|oswietlenie) ", "", text)
-    return next((key for key, variants in TARGETS.items() if text in variants), None)
-
-
-def parse_command(text):
-    """Rozpoznaj całe polecenie. Pytania, negacje i instrukcje złożone nie uruchamiają sprzętu."""
-    text = normalize(text)
-    match = re.fullmatch(r"(wlacz|wylacz|zapal|zgas) (.+)", text)
-    if match:
-        verb, target = match.groups()
-        action, value = "power", int(verb in ("wlacz", "zapal"))
-    else:
-        match = re.fullmatch(r"ustaw jasnosc(?: (.+?))? na (.+?)\s*(?:procent|%)", text)
-        if match:
-            target, spoken = match.groups()
-            try:
-                percent = integer(spoken.split())
-                if not 0 <= percent <= 100:
-                    raise ValueError()
-            except ValueError:
-                return {"error": "Podaj jasność od zera do stu procent."}
-            action, value = "brightness", (percent * 255 + 50) // 100
-            target = target or ""
-        else:
-            match = re.fullmatch(r"(?:podaj stan|sprawdz stan|jaki jest stan|stan) (.+)", text)
-            if not match:
-                return None
-            target, action, value = match.group(1), "status", None
-    device = target_from(target)
-    if device is None and target not in GENERIC:
-        # Nie przechwytuj np. 'włącz muzykę', ale nie zgaduj nieznanego obwodu oświetlenia.
-        if action == "brightness" or re.search(r"\b(?:ledy|led|ledow|swiatlo|oswietlenie)\b", target):
-            return {"error": "Obsługuję LED-y przy łóżku i na półce. Powiedz, który obwód wybrać."}
-        return None
-    return {"action": action, "target": device, "value": value}
 
 
 def read_config(path):
@@ -113,6 +65,7 @@ class MQTTLights:
     def __init__(self, config, client=None, timeout=2.0):
         self.client = client if client is not None else mqtt_client()
         self.timeout = timeout
+        self.command_lock = threading.Lock()
         self.condition = threading.Condition()
         self.connected = False
         self.subscribed = False
@@ -177,9 +130,21 @@ class MQTTLights:
 
     def execute(self, command):
         target, action, value = command["target"], command["action"], command.get("value")
-        if (target not in DEVICES or action not in ("power", "brightness", "status") or
-                (action != "status" and (type(value) is not int or not 0 <= value <= (1 if action == "power" else 255)))):
+        minimum, maximum = (-100, 100) if action == "adjust_brightness" else (0, 1 if action == "power" else 255)
+        if (target not in (*DEVICES, "all") or action not in ("power", "brightness", "adjust_brightness", "status") or
+                (action != "status" and (type(value) is not int or not minimum <= value <= maximum))):
             raise ValueError("Polecenie spoza listy dozwolonych działań LED")
+        # Każdy obwód ma osobny temat i własne potwierdzenie; brak wspólnej transakcji w ESP32.
+        with self.command_lock:
+            if target != "all":
+                return self._execute_one(target, action, value)
+            results = {key: self._execute_one(key, action, value) for key in DEVICES}
+        statuses = {result["device_status"] for result in results.values()}
+        return {"type": "answer", "text": " ".join(result["text"] for result in results.values()),
+                "source": "mqtt", "device_status": next(iter(statuses)) if len(statuses) == 1 else "partial",
+                "devices": results}
+
+    def _execute_one(self, target, action, value):
         label, prefix = DEVICES[target]
 
         def reply(text, status):
@@ -200,9 +165,18 @@ class MQTTLights:
                     return reply(f"Nie mam zgłoszonego stanu LED-ów {label}.", "unknown")
                 level = f", jasność około {round(brightness[0] * 100 / 255)} procent" if brightness else ""
                 return reply(f"Ostatni zgłoszony stan LED-ów {label}: {'włączone' if state[0] else 'wyłączone'}{level}.", "reported")
+            if action == "adjust_brightness":
+                brightness = self.states.get(prefix + "/brightness/state")
+                if brightness is None:
+                    return reply(f"Nie znam obecnej jasności LED-ów {label}. Podaj ją wprost, np. pięćdziesiąt procent.", "unknown")
+                step = raw_brightness(abs(value)) * (1 if value >= 0 else -1)
+                action, value = "brightness", max(0, min(255, brightness[0] + step))
             suffix = "" if action == "power" else "/brightness"
             state_topic = prefix + suffix + "/state"
             previous = self.states.get(state_topic)
+            reported = ("włączone" if value else "wyłączone") if action == "power" else f"jasność około {round(value * 100 / 255)} procent"
+            if previous and previous[0] == value:
+                return reply(f"Ostatni zgłoszony stan LED-ów {label} już odpowiada poleceniu: {reported}.", "reported")
             baseline = self.sequence
             try:
                 # Bez retained i bez aplikacyjnego ponawiania komend po błędzie.
@@ -217,12 +191,9 @@ class MQTTLights:
                 state = self.states.get(state_topic)
                 return bool(state and state[0] == value and state[1] > baseline and not state[2])
 
-            # Firmware publikuje tylko zmiany; identyczne ustawienie nie dostanie nowego stanu.
-            if not (previous and previous[0] == value):
-                self.condition.wait_for(lambda: confirmed() or not self.connected or self.availability == "offline",
-                                        timeout=self.timeout)
+            self.condition.wait_for(lambda: confirmed() or not self.connected or self.availability == "offline",
+                                    timeout=self.timeout)
             if confirmed() and self.connected and self.availability != "offline":
-                reported = ("włączone" if value else "wyłączone") if action == "power" else f"jasność około {round(value * 100 / 255)} procent"
                 return reply(f"Sterownik zgłosił dla LED-ów {label}: {reported}.", "confirmed")
             return reply(f"Wysłałam polecenie dla LED-ów {label}, ale nie dostałam nowego potwierdzenia stanu.", "sent_unconfirmed")
 
