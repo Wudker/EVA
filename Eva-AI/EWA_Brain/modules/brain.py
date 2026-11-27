@@ -16,7 +16,8 @@ from .calculator import calculate
 from .smartroom import DisabledLights, parse_command, target_from
 from .light_commands import (LIGHT_PROPERTIES, LIGHT_RULES, command_from_ai,
                              can_change_lights, mentioned_targets, command_description,
-                             percent_from, raw_brightness, normalize, LIGHT_WORDS)
+                             percent_from, raw_brightness, normalize, LIGHT_WORDS,
+                             lighting_candidate, question_command, percent_in_utterance)
 from .memory_manager import (MemoryStore, db_connect, recent, get_pending, set_pending,
                              clear_pending, save_turn, normal, SID_RE)
 
@@ -187,6 +188,55 @@ def _tokens(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9]+", normal(text)) if len(w) >= 3 and w not in STOPWORDS}
 
 
+def call_light_ollama(history, text, context, note=""):
+    """Krótka interpretacja LED z wymaganymi parametrami zamiast odpowiedzi rozmownej."""
+    schema = {"type": "object", "properties": {
+        "action": {"type": "string", "enum": ["none", "power", "brightness", "adjust_brightness", "status"]},
+        "target": {"type": "string", "enum": ["", "bed", "shelf", "all"]},
+        "value": {"type": "string"}, "confirm": {"type": "boolean"}},
+        "required": ["action", "target", "value", "confirm"], "additionalProperties": False}
+    active = re.search(r"Ostatni obwód LED w tej sesji: (bed|shelf|all)\.", note)
+    system = (
+        "Interpretujesz polskie polecenia oświetlenia, także tekst z błędami rozpoznawania mowy. "
+        "Zwróć tylko JSON: action, target, value, confirm. "
+        "bed=LED-y przy łóżku, shelf=na półce/szafce, all=oba. "
+        "power: value '1' lub '0'; brightness: procent 0–100 jako tekst; "
+        "adjust_brightness: zmiana w punktach procentowych -100–100 jako tekst; status: value ''. "
+        "'poziom oświetlenia', 'intensywność', 'jasność' znaczą to samo; 'proc.' to procent. "
+        "Brak urządzenia: target ''; brak liczby: value ''. Nie wymyślaj liczby z poprzedniej rozmowy. "
+        "Przy niepewnej interpretacji ustaw confirm=true. Nieznany obwód, np. 'obwód B', wymaga pytania, "
+        "nie zastępuj go wszystkimi. Pytanie o stan to status. Porada, negacja i hipoteza to action=none. "
+        "'trochę ciemniej' to adjust_brightness, value '-10'. "
+        'Przykład: ustaw poziom oświetlenia wszystkich do poziomu pięćdziesiąt proc -> '
+        '{"action":"brightness","target":"all","value":"50","confirm":false}. '
+        "Aktualny obwód: " + (active[1] if active else "brak; nie bierz urządzenia z dawnej historii") + "."
+    )
+    payload = {"model": MODEL, "stream": False, "format": schema,
+               "messages": [{"role": "system", "content": system},
+                            {"role": "user", "content": text}],
+               "options": {"temperature": 0, "num_ctx": 2048, "num_predict": 100},
+               "keep_alive": os.getenv("EVA_KEEP_ALIVE", "30m")}
+    raw = make_request_json(OLLAMA_URL + "/api/chat", payload, 360)
+    try:
+        if raw.get("done_reason") == "length" or raw.get("done") is False:
+            raise ValueError("Nieukończona interpretacja LED")
+        data = json.loads(raw["message"]["content"])
+        if not isinstance(data, dict) or set(data) != set(schema["required"]):
+            raise ValueError("Brak wymaganych parametrów LED")
+        if type(data["confirm"]) is not bool or any(not isinstance(data[key], str) for key in ("action", "target", "value")):
+            raise ValueError("Błędne typy parametrów LED")
+        if (data["action"] not in schema["properties"]["action"]["enum"] or
+                data["target"] not in schema["properties"]["target"]["enum"] or len(data["value"]) > 12):
+            raise ValueError("Błędne działanie lub wartość LED")
+        response = {"type": "clarify" if data["confirm"] else "answer", "text": "Interpretacja polecenia LED.",
+                    "light_action": data["action"], "light_target": data["target"], "light_value": data["value"],
+                    "_ollama_timings": ollama_timings(raw)}
+        command_from_ai(response)
+        return response
+    except (KeyError, TypeError, ValueError) as exc:
+        raise OllamaError(f"Niepoprawna interpretacja LED: {exc}") from exc
+
+
 def _grounded_in_user(value: str, utterance: str) -> bool:
     tokens = _tokens(value)
     if not tokens:
@@ -223,10 +273,11 @@ def _safe_alias_from_query(alias: str, question: str) -> bool:
 
 class Brain:
     def __init__(self, projects_path: Path = PROJECTS_PATH, db_path: Path = DB_PATH,
-                 model_client=None, lights=None):
+                 model_client=None, lights=None, light_client=None):
         self.store = MemoryStore(projects_path, db_path)
         self.db_path = Path(db_path)
         self.model_client = model_client or call_ollama
+        self.light_client = light_client or model_client or call_light_ollama
         self.lock = threading.RLock()
         self.warmup_state = "not_started"
         self.lights = lights if lights is not None else DisabledLights()
@@ -332,7 +383,8 @@ class Brain:
                                    "Możesz użyć go dla krótkiego dalszego polecenia."
                                    if last_target else "Nie ma bieżącego obwodu LED. Nie wybieraj go z dawnej historii.")
             try:
-                response = self.model_client(history, text, context, confirmed_note)
+                client = self.light_client if self.lights.enabled and lighting_candidate(text) else self.model_client
+                response = client(history, text, context, confirmed_note)
             except (OllamaError, ValueError, KeyError, TypeError) as exc:
                 raise OllamaError(str(exc)) from exc
             answer = response.get("text", "").strip()
@@ -421,10 +473,14 @@ class Brain:
 
     def _finish_lights(self, command, db, session_id):
         if "error" in command:
+            if command.get("action") and self.lights.enabled:
+                set_pending(db, session_id, "clarification", {
+                    "action": command["action"], "target": command.get("target"), "value": None,
+                    "tool": "led", "expires_at": time.time() + 60})
             return {"type": "clarify", "text": command["error"], "source": "mqtt"}
         if not self.lights.enabled:
             return self.lights.execute(command)
-        if command.get("target") is None:
+        if command.get("target") is None and not command.get("ignore_context"):
             command["target"] = self._light_target(session_id)
         question = None
         if command["target"] is None:
@@ -452,11 +508,18 @@ class Brain:
         except ValueError:
             return {"type": "clarify", "text": "Nie odczytałam poprawnego polecenia LED. Podaj urządzenie i działanie.", "source": "mqtt"}
         if command is None:
+            command = question_command(response.get("text", ""))
+        if command is None:
             if can_change_lights(text) and re.search(LIGHT_WORDS, normalize(text)):
                 return {"type": "clarify", "text": "Nie odczytałam jednoznacznego polecenia LED. Podaj jedno działanie i obwód: półka / szafka, łóżko albo wszystkie.", "source": "mqtt"}
             return None
         if command["action"] != "status" and not can_change_lights(text):
-            return {"type": "answer", "text": "Nie potraktowałam tej wypowiedzi jako polecenia zmiany oświetlenia.", "source": "mqtt"}
+            explicit_negation = re.search(r"\b(?:nie|nigdy|gdyby|gdybym|jesli|jezeli|jutro|pozniej|potem)\b", normalize(text))
+            noisy_request = re.search(r"\b(?:ustaw|zmien|wlacz|wylacz|zapal|zgas|zaswiec|rozjasnij|przyciemnij)\b", normalize(text))
+            if not explicit_negation and lighting_candidate(text) and (noisy_request or response.get("type") == "clarify" or command.get("needs_confirmation")):
+                command["needs_confirmation"] = True
+            else:
+                return {"type": "answer", "text": "Nie potraktowałam tej wypowiedzi jako polecenia zmiany oświetlenia.", "source": "mqtt"}
         targets = mentioned_targets(text)
         last_target = self._light_target(session_id)
         if targets:
@@ -472,6 +535,13 @@ class Brain:
             command["needs_confirmation"] = True
         if response.get("type") == "clarify":
             command["needs_confirmation"] = True
+        if command["action"] == "brightness":
+            percent = percent_in_utterance(text)
+            # AI wybiera sens, ale liczba wynika z bieżącego polecenia, nie z poprzedniej rozmowy.
+            command["value"] = raw_brightness(percent) if percent is not None else None
+        if re.search(r"\bobwod(?:u)? [a-z]\b", normalize(text)):
+            command["target"] = None
+            command["ignore_context"] = True
         return self._finish_lights(command, db, session_id)
 
     def _handle_memory_proposal(self, response: dict, question: str, db,

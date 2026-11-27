@@ -94,6 +94,7 @@ class ContextTests(unittest.TestCase):
 
     def test_ollama_json_contract_routes_lights_in_both_formats(self):
         self.brain.model_client = b.call_ollama
+        self.brain.light_client = b.call_ollama
         for mode in ("compact", "legacy"):
             answer = {"type": "answer", "text": "Interpretacja polecenia.",
                       "light_action": "brightness", "light_target": "bed", "light_value": "20"}
